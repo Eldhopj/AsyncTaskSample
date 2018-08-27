@@ -7,9 +7,19 @@ import android.view.View;
 import android.widget.ProgressBar;
 import android.widget.Toast;
 
+import java.lang.ref.WeakReference;
+
 /**Commit 1 : AsyncTask
  *      AsyncTask is an android class which makes to do some work on the background thread and publish that work into MainThread
- *      When to use? : for short operations which takes only a few seconds long*/
+ *      When to use? : for short operations which takes only a few seconds long
+ *
+ * Commit 2 : Fix for the AsyncTaskClass memory leak
+ *          Problem : The AsyncTaskClass have an implicit reference to the outer class (MainActivity) eg: progressBar
+ *                  when we press backButton or rotate the device usually the activity is distorted but asyncTask live until the task finishes
+ *                  And it remains in the memory and causes memory leak
+ *          Solution : WeakReference
+ *                   Can garbage collected even the activity is distorted
+ *                  */
 public class MainActivity extends AppCompatActivity {
     private ProgressBar progressBar;
     @Override
@@ -20,7 +30,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     public void startAsyncTask(View view) {
-        new AsyncTaskClass().execute(10);
+        new AsyncTaskClass(MainActivity.this).execute(10);
     }
 
     /** 1st params -> Type of parameter which we are passing eg: URL, Integer ..
@@ -29,12 +39,26 @@ public class MainActivity extends AppCompatActivity {
      *
      *  NOTE : If we don't want to pass some params we can put Void and we cant pass primitive data types
      */
-    private class AsyncTaskClass extends AsyncTask<Integer,Integer,String>{
+    private static class AsyncTaskClass extends AsyncTask<Integer,Integer,String>{ // make class static to prevent memory leak
+
+        private WeakReference<MainActivity> activityWeakReference;
+        //WeakReference can still garbage collected even the activity is distorted
+
+        AsyncTaskClass(MainActivity activity){ // Constructor
+            activityWeakReference = new WeakReference<MainActivity>(activity);
+        }
 
         @Override
         protected void onPreExecute() {
             super.onPreExecute();
-            progressBar.setVisibility(View.VISIBLE);
+            /* This will get a strong reference to the activity
+            * The scope of this strong reference is inside this method only,
+            * Since the weak reference is there in the MainClass(AsyncTaskClass) this still garbage collected*/
+            MainActivity activity = activityWeakReference.get();
+            if (activity == null || activity.isFinishing()){ // MainActivity is destroyed or is in a process of destroying
+                return;// if the main activity is destroyed this will return
+            }
+            activity.progressBar.setVisibility(View.VISIBLE);
         }
 
         //This is the only method which runs on the background thread except all runs on the mainThread
@@ -57,16 +81,24 @@ public class MainActivity extends AppCompatActivity {
         @Override
         protected void onProgressUpdate(Integer... values) {
             super.onProgressUpdate(values);
-            progressBar.setProgress(values[0]);
+            MainActivity activity = activityWeakReference.get();
+            if (activity == null || activity.isFinishing()){ // MainActivity is destroyed or is in a process of destroying
+                return;// if the main activity is destroyed this will return
+            }
+            activity.progressBar.setProgress(values[0]);
         }
 
         //The return value from the doInBackground come in here
         @Override
         protected void onPostExecute(String s) {
             super.onPostExecute(s);
-            Toast.makeText(MainActivity.this, s, Toast.LENGTH_SHORT).show();
-            progressBar.setProgress(0);
-            progressBar.setVisibility(View.INVISIBLE);
+            MainActivity activity = activityWeakReference.get();
+            if (activity == null || activity.isFinishing()){ // MainActivity is destroyed or is in a process of destroying
+                return;// if the main activity is destroyed this will return
+            }
+            Toast.makeText(activity, s, Toast.LENGTH_SHORT).show();
+            activity.progressBar.setProgress(0);
+            activity.progressBar.setVisibility(View.INVISIBLE);
         }
     }
 }
